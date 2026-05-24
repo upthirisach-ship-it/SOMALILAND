@@ -1,39 +1,54 @@
-const { default: makeWASocket, useMultiFileAuthState } = require("@whiskeysockets/baileys");
-const qrcode = require("qrcode-terminal");
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require("@whiskeysockets/baileys");
+const readline = require("readline");
+
+function question(text) {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    return new Promise(resolve => rl.question(text, answer => {
+        rl.close();
+        resolve(answer);
+    }));
+}
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState("auth_info");
 
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true
+        printQRInTerminal: false
     });
 
-    // Save login session
     sock.ev.on("creds.update", saveCreds);
 
-    // QR Code login
-    sock.ev.on("connection.update", (update) => {
-        const { connection, qr } = update;
+    sock.ev.on("connection.update", async (update) => {
+        const { connection, lastDisconnect } = update;
 
-        if (qr) {
-            qrcode.generate(qr, { small: true });
+        if (connection === "close") {
+            const shouldReconnect =
+                lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+
+            if (shouldReconnect) startBot();
         }
 
         if (connection === "open") {
-            console.log("✅ WhatsApp Bot Connected!");
-        }
-
-        if (connection === "close") {
-            console.log("❌ Connection closed. Restart bot...");
-            startBot();
+            console.log("✅ Bot Connected Successfully");
         }
     });
 
-    // Message handler
+    // 🔥 PAIRING CODE LOGIN (IMPORTANT)
+    if (!sock.authState.creds.registered) {
+        const phoneNumber = await question("📱 Enter your WhatsApp number (country code): ");
+
+        const code = await sock.requestPairingCode(phoneNumber);
+        console.log("🔑 Your Pairing Code is: " + code);
+    }
+
+    // Messages
     sock.ev.on("messages.upsert", async (m) => {
         const msg = m.messages[0];
-
         if (!msg.message) return;
 
         const text =
@@ -42,29 +57,8 @@ async function startBot() {
 
         const sender = msg.key.remoteJid;
 
-        console.log("Message:", text);
-
-        // Simple commands
         if (text === "hi") {
-            await sock.sendMessage(sender, { text: "Hello 👋 I am your WhatsApp bot!" });
-        }
-
-        if (text === "menu") {
-            await sock.sendMessage(sender, {
-                text: "📌 MENU:\n1. hi\n2. time\n3. owner"
-            });
-        }
-
-        if (text === "time") {
-            await sock.sendMessage(sender, {
-                text: "⏰ " + new Date().toLocaleString()
-            });
-        }
-
-        if (text === "owner") {
-            await sock.sendMessage(sender, {
-                text: "👨‍💻 Bot created using Node.js + Baileys"
-            });
+            await sock.sendMessage(sender, { text: "Hello 👋 Pair code bot is working!" });
         }
     });
 }
